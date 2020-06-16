@@ -23,7 +23,9 @@
       </td>
       <td>
         <button class="btn btn-primary btn-sm"
-                (click)="delete(polygon)">
+                (click)="selectedPolygon = polygon"
+                data-toggle="modal"
+                [attr.data-target]="'#' + modalID + 'Confirm'">
           Delete
         </button>
       </td>
@@ -31,6 +33,8 @@
     </tbody>
   </table>
 </div>
-<!--<app-confirm-modal-template [modalID]="modalID+'Confirm'"
-                            (onConfirm)="deletePolygon(selectedPolygon)"></app-confirm-modal-template>-->
+<app-confirm-modal-template
+  [modalID]="modalID+'Confirm'"
+  (onConfirm)="delete(selectedPolygon)"
+></app-confirm-modal-template>
 

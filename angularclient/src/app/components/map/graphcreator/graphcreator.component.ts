@@ -1,16 +1,19 @@
 import {Component, OnDestroy, OnInit} from '@angular/core';
+import { Polygon } from '../../../model/MapAreas/Polygons/Polygon';
+import { Stand } from '../../../model/Stand/Stand';
 import {MapService} from '../../../services/map.service';
 import * as L from 'leaflet';
 import {Marker} from 'leaflet/src/layer/marker/Marker.js';
 import '../../../../../node_modules/leaflet-contextmenu/dist/leaflet.contextmenu.js'
 import '../../../../lib/leaflet-easybutton/src/easy-button';
-import '../../../../lib/leaflet-easybutton/src/easy-button.css';
 import {Graph} from '../../../model/Graphs/Graph';
 import {Edge} from '../../../model/Graphs/Edge';
 import {Vertex} from '../../../model/Graphs/Vertex';
 import {GraphService} from "../../../services/graph.service";
-import {StoreService} from "../../../services/store.service";
-import {WAYPOINTICON} from "../map.component";
+import { PolygonService } from '../../../services/polygon.service';
+import { StandService } from '../../../services/stand.service';
+import { axisAngleFromQuaternion, StoreService } from '../../../services/store.service';
+import { ARROWICON, CIRCLEBACK, STANDICON, WAYPOINTICON } from '../map.component';
 import {ToastrService} from "ngx-toastr";
 import {fromEvent} from "rxjs";
 
@@ -40,11 +43,20 @@ export class GraphcreatorComponent implements OnInit, OnDestroy {
   private imageResolution;
   private mapContainerSize = 800;
   private subscription;
+  private polygons = [];
+
+  private standLayer = L.featureGroup();
+
+  private overlays = {
+    Stanowiska: this.standLayer,
+  };
 
   constructor(private mapService: MapService,
               private graphService: GraphService,
               private store: StoreService,
-              private toast: ToastrService) {
+              private toast: ToastrService,
+              private polygonService: PolygonService,
+              private standService: StandService) {
     this.context = this;
   }
 
@@ -86,6 +98,89 @@ export class GraphcreatorComponent implements OnInit, OnDestroy {
       this.imageResolution = img.width;
       //
     }
+
+    this.polygonService.getPolygons().subscribe(
+      polygons => {
+        this.drawPolygons(polygons);
+      }
+    );
+
+    this.standService.getAll().subscribe(
+      stands => {
+        this.drawStand(stands);
+      }
+    );
+  }
+
+  private isMarkerInsidePolygon(latlng, poly): boolean {
+    var inside = false;
+    var x = latlng.lat, y = latlng.lng;
+    for (var ii=0;ii<poly.getLatLngs().length;ii++){
+      var polyPoints = poly.getLatLngs()[ii];
+      for (var i = 0, j = polyPoints.length - 1; i < polyPoints.length; j = i++) {
+        var xi = polyPoints[i].lat, yi = polyPoints[i].lng;
+        var xj = polyPoints[j].lat, yj = polyPoints[j].lng;
+
+        var intersect = ((yi > y) != (yj > y))
+          && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+      }
+    }
+
+    return inside;
+  };
+
+  private drawPolygon(polygon: Polygon) {
+
+    let existingPolygonpoints = [];
+    polygon.points.forEach(point => {
+      const pointPosition = L.latLng([this.getMapCoordinates(point.x), this.getMapCoordinates(point.y)]);
+      existingPolygonpoints.push(pointPosition);
+
+    });
+    let polygonik = L.polygon(existingPolygonpoints, {color: polygon.type.color}).bindTooltip(polygon.type.name, {
+      sticky: true // If true, the tooltip will follow the mouse instead of being fixed at the feature center.
+    });
+    polygonik.addTo(this.map);
+    this.polygons.push(polygonik);
+  }
+
+
+  private drawPolygons(polygon: Polygon[]) {
+    polygon.forEach(object => {
+      this.drawPolygon(object);
+    });
+  }
+
+  private drawStand(stands: Stand[]) {
+    stands.forEach(stand => {
+      const position = [
+        this.getMapCoordinates(Number(stand.pose.position.y)),
+        this.getMapCoordinates(Number(stand.pose.position.x))
+      ];
+      let circleMarker = L.marker(position, {icon: CIRCLEBACK});
+      circleMarker.addTo(this.standLayer);
+      let marker = L.marker(position, {icon: STANDICON});
+      marker.addTo(this.standLayer);
+      let orientationMarker = L.marker(position, {
+        icon: ARROWICON,
+        rotationAngle: axisAngleFromQuaternion(stand.pose.orientation) * 180 / Math.PI
+      });
+      orientationMarker.addTo(this.standLayer);
+      marker.bindPopup(
+        'Stand Details<br />Position x: '
+        + stand.pose.position.x
+        + '<br />Position y: ' +
+        +stand.pose.position.y
+        + '<br />Orientation: ' +
+        +stand.pose.position.z
+        + '<br />Status: ' +
+        +stand.standStatus.name
+        + '<br />Parking type: ' +
+        +stand.parkingType.name
+        + '<br />Stand type: ' +
+        +stand.standType.name);
+    })
   }
 
   private initMap(): void {
@@ -93,17 +188,24 @@ export class GraphcreatorComponent implements OnInit, OnDestroy {
     this.map = L.map('map', {
       crs: L.CRS.Simple,
       contextmenu: true,
+      layers: [this.standLayer]
     });
     L.imageOverlay(this.imageURL, imageBounds).addTo(this.map);
     L.easyButton('fa-crosshairs', function (btn, map) {
       map.setView([400, 400], 0);
     }).addTo(this.map);
     this.map.fitBounds(imageBounds);
+    L.control.layers({}, this.overlays).addTo(this.map);
 
     this.addContextMenuShowHandler();
     this.map.on('click', e => {
       if (!this.editEdges) {
-        this.createNewMarker(e.latlng);
+        const insidePoly = this.polygons.some(polygon => this.isMarkerInsidePolygon(e.latlng, polygon));
+        if (insidePoly) {
+          this.toast.error('Nie można stworzyć wierzchołka na obszarze zabronionym');
+        } else {
+          this.createNewMarker(e.latlng);
+        }
       }
     });
   }
@@ -126,7 +228,13 @@ export class GraphcreatorComponent implements OnInit, OnDestroy {
       this.createEdge(e)
     });
     marker.on('move', e => {
-      this.updateEdge(e)
+      const isInside = this.polygons.some(poly => this.isMarkerInsidePolygon(e.latlng, poly));
+      if (isInside) {
+        this.toast.error('Nie można przesunąć wierzchołka na obszarz zabroniony');
+        this.deleteMarker({ ...e, relatedTarget: e.target  });
+      } else {
+        this.updateEdge(e)
+      }
     });
 
     marker.addTo(this.map);
@@ -230,6 +338,11 @@ export class GraphcreatorComponent implements OnInit, OnDestroy {
   }
 
   public saveGraph() {
+    if (this.edges.length + 1 < this.vertices.length) {
+      this.toast.error('Graf musi być spójny');
+      return;
+    }
+
     let graph: Graph = new Graph();
     let graphEdges: Edge[] = [];
     this.edges.forEach(edge => {

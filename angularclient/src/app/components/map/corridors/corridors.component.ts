@@ -1,24 +1,26 @@
 import {Component, OnDestroy, OnInit} from '@angular/core';
+import { Stand } from '../../../model/Stand/Stand';
 import {MapService} from "../../../services/map.service";
 import {CorridorService} from "../../../services/corridor.service";
 import {Marker} from "leaflet/src/layer/marker/Marker";
 import * as L from 'leaflet';
 import {UniversalPoint} from "../../../model/MapAreas/UniversalPoint";
 import {Corridor} from "../../../model/MapAreas/Corridors/Corridor";
-import {StoreService} from "../../../services/store.service";
+import { StandService } from '../../../services/stand.service';
+import { axisAngleFromQuaternion, StoreService } from '../../../services/store.service';
 import {MovementPath} from "../../../model/MapAreas/MovementPaths/MovementPath";
 import {ToastrService} from "ngx-toastr";
 import {MovementPathService} from "../../../services/movementPath.service";
-import {WAYPOINTICON} from "../map.component";
+import { ARROWICON, CIRCLEBACK, STANDICON, WAYPOINTICON } from '../map.component';
 import {fromEvent} from "rxjs";
-
+​
 @Component({
   selector: 'app-corridors',
   templateUrl: './corridors.component.html',
   styleUrls: ['./corridors.component.css']
 })
 export class CorridorsComponent implements OnInit, OnDestroy {
-
+​
   dataLoaded = false;
   private drawCorridorBoolean = false;
   private polygonPoints = [];
@@ -29,7 +31,7 @@ export class CorridorsComponent implements OnInit, OnDestroy {
   private paths: MovementPath[] = [];
   private pathID;
   private name;
-
+​
   //Map related variables
   private map;
   private imageURL = '';
@@ -37,26 +39,29 @@ export class CorridorsComponent implements OnInit, OnDestroy {
   private imageResolution;
   private mapContainerSize = 800;
   private subscription;
-
+​
   private movementPaths = L.featureGroup();
-
+  private standLayer = L.featureGroup();
+​
   private overlays = {
+    Stanowiska: this.standLayer,
     Sciezki: this.movementPaths
   };
-
+​
   constructor(private mapService: MapService,
               private corridorService: CorridorService,
               private store: StoreService,
               private toast: ToastrService,
+              private standService: StandService,
               private movementPathService: MovementPathService) {
   }
-
+​
   getPathsFromDb() {
     this.movementPathService.getMovementPaths().subscribe(
       data => this.paths = data
     )
   }
-
+​
   ngOnInit() {
     this.loadMap();
     this.getPathsFromDb();
@@ -65,13 +70,13 @@ export class CorridorsComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.subscription.unsubscribe();
   }
-
+​
   onResize() {
     // const mapContainer = document.getElementById('map-container');
     // this.mapContainerSize = mapContainer.clientWidth;
   }
-
-
+​
+​
   drawCorridor() {
     this.map.on('click', e => {
       if (!this.drawCorridorBoolean) {
@@ -92,17 +97,48 @@ export class CorridorsComponent implements OnInit, OnDestroy {
             }
           ]
         });
-
+​
         marker.addTo(this.map);
         this.vertices.push(marker);
-
+​
         marker.on('move', e => {
           this.updateCorridor(e)
         });
       }
     });
   }
-
+​
+  private drawStand(stands: Stand[]) {
+    stands.forEach(stand => {
+      const position = [
+        this.getMapCoordinates(Number(stand.pose.position.y)),
+        this.getMapCoordinates(Number(stand.pose.position.x))
+      ];
+      let circleMarker = L.marker(position, {icon: CIRCLEBACK});
+      circleMarker.addTo(this.standLayer);
+      let marker = L.marker(position, {icon: STANDICON});
+      marker.addTo(this.standLayer);
+      let orientationMarker = L.marker(position, {
+        icon: ARROWICON,
+        rotationAngle: axisAngleFromQuaternion(stand.pose.orientation) * 180 / Math.PI
+      });
+      orientationMarker.addTo(this.standLayer);
+      marker.bindPopup(
+        'Stand Details<br />Position x: '
+        + stand.pose.position.x
+        + '<br />Position y: ' +
+        +stand.pose.position.y
+        + '<br />Orientation: ' +
+        +stand.pose.position.z
+        + '<br />Status: ' +
+        +stand.standStatus.name
+        + '<br />Parking type: ' +
+        +stand.parkingType.name
+        + '<br />Stand type: ' +
+        +stand.standType.name);
+    })
+  }
+​
   cancelCorridor() {
     this.polygonPoints = [];
     this.map.removeLayer(this.polygon);
@@ -114,14 +150,14 @@ export class CorridorsComponent implements OnInit, OnDestroy {
     this.corridor = new Corridor();
     this.name = null;
   }
-
+​
   saveCorridor() {
     this.createCorridor();
     if (this.polygonPoints.length < 3) {
       alert("Nie zdefiniowano wierzchołków lub korytarz ma mniej niż trzy wierzchołki!");
       return;
     }
-
+​
     let universalPoints: UniversalPoint[] = [];
     this.polygonPoints.forEach(corridorP => {
       let coords: L.latLng = new L.latLng([
@@ -141,7 +177,7 @@ export class CorridorsComponent implements OnInit, OnDestroy {
       this.corridor.id = null;
     }
     this.corridor.points = universalPoints;
-
+​
     let path: MovementPath;
     path = this.paths.find(e => {
       if (e.id === this.corridor.movementPathId) {
@@ -152,14 +188,14 @@ export class CorridorsComponent implements OnInit, OnDestroy {
       alert("Taka ścieżka już nie istnieje!")
       return;
     }
-
+​
     if (path != null) {
       if (!this.checkPathInsidePolygon(path, this.polygon)) {
         alert("Ta ścieżka nie znajduje się w danym korytarzu!");
         return;
       }
     }
-
+​
     if (!this.corridor.movementPathId) {
       this.corridor.movementPathId = null;
     }
@@ -171,9 +207,9 @@ export class CorridorsComponent implements OnInit, OnDestroy {
         this.toast.error('Nie udało się zapisać do bazy');
       }
     });
-
+​
   }
-
+​
   private loadMap() {
     if (localStorage.getItem(this.store.mapID) !== null) {
       this.afterMapLoaded(localStorage.getItem(this.store.mapID))
@@ -186,44 +222,50 @@ export class CorridorsComponent implements OnInit, OnDestroy {
       );
     }
   }
-
+​
   private afterMapLoaded(data: String) {
     this.dataLoaded = true;
     this.imageURL = 'data:image/jpg;base64,' + data;
     this.initMap();
-
+​
     const img = new Image;
     img.src = this.imageURL;
     img.onload = () => {
       this.imageResolution = img.width;
     }
-
+​
     this.movementPathService.getMovementPaths().subscribe(
       paths => {
         this.drawPaths(paths);
       }
     );
+​
+    this.standService.getAll().subscribe(
+      stands => {
+        this.drawStand(stands);
+      }
+    );
   }
-
+​
   private deleteMarker(e) {
     if (this.polygonPoints.length != 0) {
-
+​
       this.vertices = this.vertices.filter(marker => marker !== e.relatedTarget);
       this.map.removeLayer(e.relatedTarget);
       this.map.removeLayer(this.polygon);
       this.polygonPoints = [];
       this.createCorridor();
-
+​
     } else {
       this.vertices = this.vertices.filter(marker => marker !== e.relatedTarget);
       this.map.removeLayer(e.relatedTarget);
     }
   }
-
+​
   private getRealCoordinates(value) {
     return (value * this.mapResolution * (this.imageResolution /  this.mapContainerSize) - ((this.imageResolution * this.mapResolution) / 2));
   }
-
+​
   private initMap(): void {
     const imageBounds = [[0, 0], [ this.mapContainerSize,  this.mapContainerSize]];
     this.map = L.map('map', {
@@ -235,11 +277,11 @@ export class CorridorsComponent implements OnInit, OnDestroy {
       map.setView([400, 400], 0);
     }).addTo(this.map);
     this.map.fitBounds(imageBounds);
-
+​
     this.drawCorridor();
     L.control.layers({}, this.overlays).addTo(this.map);
   }
-
+​
   private updateCorridor(e) {
     let markerPos = this.vertices.filter(marker => marker._leaflet_id === e.target._leaflet_id)[0];
     let newEdges = [];
@@ -254,26 +296,26 @@ export class CorridorsComponent implements OnInit, OnDestroy {
     this.vertices = newEdges;
     this.createCorridor();
   }
-
+​
   private createCorridor() {
     this.polygonPoints = [];
     this.vertices.forEach(marker => {
       this.polygonPoints.push(marker._latlng);
     });
-
+​
     this.map.removeLayer(this.polygon);
     this.polygonsList.push(this.polygonPoints);
     this.polygon = L.polygon(this.polygonPoints, {color: 'red'}).addTo(this.map);
   }
-
+​
   private clearMap() {
     this.cancelCorridor();
   }
-
+​
   private getMapCoordinates(value) {
     return ((value) + (this.imageResolution * this.mapResolution) / 2) * (1 / this.mapResolution) * ( this.mapContainerSize / this.imageResolution)
   }
-
+​
   editExistingCorridor(corridor: Corridor) {
     this.clearMap();
     if (!corridor) return;
@@ -283,34 +325,34 @@ export class CorridorsComponent implements OnInit, OnDestroy {
     if (corridor.movementPathId) {
       this.corridor.movementPathId = corridor.movementPathId;
     }
-
+​
     corridor.points.forEach(e => {
       const translatedPoint = L.latLng([this.getMapCoordinates(e.y), this.getMapCoordinates(e.x)]);
       this.polygon.addLatLng(translatedPoint);
       this.createNewMarker(translatedPoint);
     });
     this.polygon.addTo(this.map);
-
+​
   }
-
+​
   private createNewMarker(position: L.latlng) {
     let marker = new L.marker(position, {
       draggable: true,
       icon: WAYPOINTICON
     });
-
+​
     marker.on('move', e => {
       this.updatePoints(e)
     });
-
+​
     marker.addTo(this.map);
     this.vertices.push(marker);
     return marker;
   }
-
+​
   private updatePoints(e) {
     let markerPos = this.vertices.filter(marker => marker._leaflet_id === e.target._leaflet_id)[0];
-
+​
     this.vertices.forEach(point => {
       if (point._leaflet_id === markerPos._leaflet_id) {
         point._latlng = markerPos._latlng;
@@ -318,7 +360,7 @@ export class CorridorsComponent implements OnInit, OnDestroy {
     });
     this.createCorridor();
   }
-
+​
   private checkPathInsidePolygon(path, polygon) {
     let points = path.points;
     let check = true;
@@ -331,7 +373,7 @@ export class CorridorsComponent implements OnInit, OnDestroy {
     });
     return check;
   }
-
+​
   private drawPaths(paths: MovementPath[]) {
     paths.forEach(path => {
         let polylinePoints = [];

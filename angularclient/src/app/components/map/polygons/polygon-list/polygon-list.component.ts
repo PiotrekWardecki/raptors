@@ -20,6 +20,7 @@ export class PolygonListComponent implements OnInit, OnChanges {
 
   @Output()
   polygonToEdit: EventEmitter<Polygon> = new EventEmitter<Polygon>();
+  selectedPolygon: Polygon;
 
   constructor(private store: StoreService,
               private graphService: GraphService,

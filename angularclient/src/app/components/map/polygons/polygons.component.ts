@@ -1,359 +1,199 @@
-import {Component, OnDestroy, OnInit} from '@angular/core';
-import {MapService} from "../../../services/map.service";
+import { Component, OnInit } from '@angular/core';
 import * as L from 'leaflet';
-import '../../../../../node_modules/leaflet-contextmenu/dist/leaflet.contextmenu.js'
+import { Map, Marker, Polygon as LeafletPolygon } from 'leaflet';
+import 'leaflet-contextmenu/dist/leaflet.contextmenu.js';
+import { ToastrService } from 'ngx-toastr';
+import { Observable, of } from 'rxjs';
+import { map, tap } from 'rxjs/operators';
 import '../../../../lib/leaflet-easybutton/src/easy-button';
-import '../../../../lib/leaflet-easybutton/src/easy-button.css';
-import {Polygon} from "../../../model/MapAreas/Polygons/Polygon";
-import {UniversalPoint} from "../../../model/MapAreas/UniversalPoint";
-import {AreaType} from "../../../model/type/AreaType";
-import {PolygonService} from "../../../services/polygon.service";
-import {Marker} from "leaflet/src/layer/marker/Marker";
-import {StoreService} from "../../../services/store.service";
-import {ToastrService} from "ngx-toastr";
-import {AreaTypeService} from "../../../services/type/area-type.service";
-import {fromEvent} from "rxjs";
+import { Polygon } from '../../../model/MapAreas/Polygons/Polygon';
+import { UniversalPoint } from '../../../model/MapAreas/UniversalPoint';
+import { AreaType } from '../../../model/type/AreaType';
+import { MapService } from '../../../services/map.service';
+import { PolygonService } from '../../../services/polygon.service';
+import { StoreService } from '../../../services/store.service';
+import { AreaTypeService } from '../../../services/type/area-type.service';
+
+const markerIcon = L.icon({
+  iconUrl: '/assets/icons/position.png',
+  iconSize: [36, 36],
+  iconAnchor: [36 / 2, 36 / 2],
+});
 
 @Component({
   selector: 'app-polygons',
   templateUrl: './polygons.component.html',
-  styleUrls: ['./polygons.component.css']
+  styleUrls: ['./polygons.component.css'],
 })
-export class PolygonsComponent implements OnInit, OnDestroy {
-  dataLoaded = false;
-  poly = null;
-  private drawPolygon = true;
-  private polygonPoints = [];
-  private convertedPoints = [];
-  private polygonsList = [[]];
-  private getPolygonsFromDB: Polygon[];
-  private vertices: Marker[] = [];
-  private polygon = L.polygon;
-  private areaTypes: AreaType[] = [];
-  private areaType: AreaType;
-  selectedAreaType: string;
-  private polygoN: Polygon = new Polygon(null, null, null);
-  private isDrawed: boolean;
+export class PolygonsComponent implements OnInit {
+  public mapLoaded: boolean = false;
+  private mapSize: number = 800;
+  private mapBounds = [[0, 0], [this.mapSize, this.mapSize]];
+  public markers: Marker[] = [];
+  public polygons: Polygon[];
+  public areaTypes: AreaType[] = [];
+  private selectedAreaType: AreaType;
+  public selectedAreaTypeId: string;
+  private polygon: LeafletPolygon;
+  public editedPolygonId: string;
+  private map: Map;
+  private imageWidth: number;
+  private mapResolution: number = 0.01; // TODO
 
-  //Map related variables
-  private map;
-  private imageURL = '';
-  private mapResolution = 0.01;//TODO()
-  private imageResolution;
-  private mapContainerSize = 800;
-  private subscription;
+  constructor(
+    private mapService: MapService,
+    private polygonService: PolygonService,
+    private storeService: StoreService,
+    private areaTypeService: AreaTypeService,
+    private toast: ToastrService,
+  ) {}
 
-  constructor(private mapService: MapService,
-              private polygonService: PolygonService,
-              private storeService: StoreService,
-              private areaTypeService: AreaTypeService,
-              private toast: ToastrService) {
-  }
-
-  ngOnInit() {
-    this.loadMap();
-    this.areaType = new AreaType(null, null);
-    this.subscription = fromEvent(window, 'resize').subscribe(() => this.onResize());
-  }
-
-  ngOnDestroy(): void {
-    this.subscription.unsubscribe();
-  }
-
-  onResize() {
-    const mapContainer = document.getElementById('map-container');
-    this.mapContainerSize = mapContainer.clientWidth;
-  }
-
-  private loadMap() {
-    if (localStorage.getItem(this.storeService.mapID) !== null) {
-      this.afterMapLoaded(localStorage.getItem(this.storeService.mapID))
-    } else {
-      this.mapService.getMap(this.storeService.mapID).subscribe(
-        data => {
-          this.afterMapLoaded(data);
-          localStorage.setItem(this.storeService.mapID, data)
-        }
-      );
-    }
-  }
-
-  private afterMapLoaded(data: String) {
-    this.dataLoaded = true;
-    this.imageURL = 'data:image/jpg;base64,' + data;
-    this.initMap();
-
-    const img = new Image;
-    img.src = this.imageURL;
-    img.onload = () => {
-      this.imageResolution = img.width;
-      //
-    };
-
+  ngOnInit(): void {
     this.polygonService.getPolygons().subscribe(polygons => {
-        this.getPolygonsFromDB = polygons;
-        this.getPolygonsFromDB.forEach(id=>{
-        });
-      }
-    );
+      this.polygons = polygons;
+    });
 
     this.areaTypeService.getAll().subscribe(areaTypes => {
       this.areaTypes = areaTypes;
-    })
+    });
+
+    this.downloadMapImage().subscribe(async imageUrl => {
+      this.mapLoaded = true;
+      this.imageWidth = await this.getImageWidth(imageUrl);
+      this.initMap(imageUrl);
+    });
   }
 
-  private initMap(): void {
-    const imageBounds = [[0, 0], [this.mapContainerSize, this.mapContainerSize]];
-    this.map = L.map('map', {
-      crs: L.CRS.Simple,
+  downloadMapImage(): Observable<string> {
+    const mapId = this.storeService.mapID;
+    const fromLocalStorage = localStorage.getItem(mapId);
+
+    const observable: Observable<string> = fromLocalStorage
+      ? of(fromLocalStorage)
+      : this.mapService.getMap(mapId).pipe(tap(base64image => localStorage.setItem(mapId, base64image)));
+
+    return observable.pipe(map(base64image => `data:image/jpg;base64,${base64image}`));
+  }
+
+  initMap(imageUrl: string): void {
+    this.map = L.map('map', { crs: L.CRS.Simple });
+    this.map.on('click', event => this.addMarker(event));
+    this.map.fitBounds(this.mapBounds);
+    this.map.setMaxBounds(this.mapBounds);
+    L.imageOverlay(imageUrl, this.mapBounds).addTo(this.map);
+    L.easyButton('fa-crosshairs', () => this.centerMap()).addTo(this.map);
+    this.polygon = L.polygon([]).addTo(this.map);
+  }
+
+  async getImageWidth(imageUrl: string): Promise<number> {
+    return new Promise(resolved => {
+      const image = new Image();
+      image.onload = () => resolved(image.width);
+      image.src = imageUrl;
+    });
+  }
+
+  centerMap(): void {
+    this.map.setView([this.mapSize / 2, this.mapSize / 2], 0);
+  }
+
+  deleteMarker(event): void {
+    event.relatedTarget.remove();
+    this.markers = this.markers.filter(marker => marker !== event.relatedTarget);
+    this.updatePolygon();
+  }
+
+  updatePolygon(): void {
+    const points = this.markers.map(marker => marker._latlng);
+    this.polygon.setLatLngs(points);
+  }
+
+  resetPolygon(): void {
+    this.markers.forEach(marker => marker.remove());
+    this.markers = [];
+    this.updatePolygon();
+  }
+
+  cancelEdit(): void {
+    this.editedPolygonId = null;
+    this.resetPolygon();
+  }
+
+  onAreaSelected(id: string): void {
+    this.selectedAreaTypeId = id;
+    this.selectedAreaType = this.areaTypes.find(area => area.id === id);
+    this.polygon.setStyle({ color: this.selectedAreaType.color });
+  }
+
+  addMarker(event): void {
+    let marker = L.marker(event.latlng, {
+      draggable: true,
+      icon: markerIcon,
       contextmenu: true,
+      contextmenuItems: [{
+        text: 'Usuń punkt',
+        callback: event => this.deleteMarker(event),
+      }],
     });
-    L.imageOverlay(this.imageURL, imageBounds).addTo(this.map);
-    L.easyButton('fa-crosshairs', function (btn, map) {
-      map.setView([400, 400], 0);
-    }).addTo(this.map);
-    this.map.fitBounds(imageBounds);
 
-    this.drawPoly();
-
+    marker.on('move', () => this.updatePolygon());
+    marker.addTo(this.map);
+    this.markers.push(marker);
+    this.updatePolygon();
   }
 
-  private drawPoly() {
-    this.map.on('click', e => {
-      // dodaj wierzcholki do listy
-      if (this.drawPolygon) {
-        const markerIcon = L.icon({
-          iconUrl: '/assets/icons/position.png',
-          iconSize: [36, 36],
-          iconAnchor: [36 / 2, 36 / 2]
-        });
-        let marker = new L.marker(e.latlng, {
-          draggable: true,
-          icon: markerIcon,
-          contextmenu: true,
-          contextmenuItems: [
-            {
-              text: 'Usuń punkt trasy',
-              callback: this.deleteMarker,
-              context: this
-            }
-          ]
-        });
-
-        marker.addTo(this.map);
-        this.vertices.push(marker);
-
-        //przemieszczanie vertexów
-        marker.on('move', e => {
-          this.updatePoly(e)
-        });
-        //this.vertices.push(marker);
-      }
-    });
-
-  }
-
-  //przemieszczanie vertexów
-  private updatePoly(e) {
-    let markerPos = this.vertices.filter(marker => marker._leaflet_id === e.target._leaflet_id)[0];
-    let newEdges = [];
-    newEdges = this.vertices;
-    newEdges.forEach(vertice => {
-      if (vertice._leaflet_id === markerPos._leaflet_id) {
-        vertice._latlng = markerPos._latlng;
-      }
-      //newEdges = this.vertices;
-    });
-    this.polygonPoints = [];
-    this.vertices = [];
-    this.vertices = newEdges;
-    this.createPoly();
-    newEdges = [];
-  }
-
-  private createPoly() {
-
-    this.drawPolygon = false;
-    this.polygonPoints = [];
-    this.vertices.forEach(marker => {
-      this.polygonPoints.push(marker._latlng);
-    });
-    if (this.polygonPoints.length <= 3) {
-      alert("Zbyt mała liczba wierzchołków: " + this.polygonPoints.length);
-    } else {
-      this.map.removeLayer(this.polygon);
-      this.polygonsList.push(this.polygonPoints);
-
-      this.polygon = L.polygon(this.polygonPoints, {color: this.areaType.color}).addTo(this.map);
-      this.map.fitBounds(this.polygon.getBounds());
+  savePolygon(): void {
+    if (!this.selectedAreaType) {
+      this.toast.error('Podaj typ obszaru!');
+      return;
     }
-    this.isDrawed = true;
 
-  }
+    if (this.markers.length < 3) {
+      this.toast.error('Podaj co najmniej 3 wierzchołki!');
+      return;
+    }
 
-  private getRealCoordinates(value) {
-    return (value * this.mapResolution * (this.imageResolution / this.mapContainerSize) - ((this.imageResolution * this.mapResolution) / 2))
-  }
-
-  private savePoly() {
-    if(this.selectedAreaType!=null){
-
-      this.drawPolygon = true;
-      this.map.removeLayer(this.polygon);
-      this.map.removeLayer(this.vertices);
-      this.convertedPoints = [];
-      this.vertices.map(edge => this.map.removeLayer(edge));
-      this.vertices = new Array<Marker>();    // konwersja latlng na punkty z mapy
-      let polygonPointz: UniversalPoint[] = [];
-      this.polygonPoints.forEach(polygonP => {
-        let coords: L.latLng = new L.latLng([
-          this.getRealCoordinates(polygonP.lat),
-          this.getRealCoordinates(polygonP.lng)]);
-        this.convertedPoints.push(coords)
-      });
-
-      // tworzenie obiektu polygon, przygotowanie do wysłania na bazę
-      this.convertedPoints.forEach(polygonP => {
-        let universalPoint: UniversalPoint = new UniversalPoint(
-          polygonP.lat,
-          polygonP.lng,
-          0
-        );
-        polygonPointz.push(universalPoint)
-      });
-      //let type: AreaType = new AreaType(this.areaType.name, this.areaType.color);
-      //let polygon = new Polygon('polygon', this.areaType, polygonPointz);
-      this.polygoN.name = "polygon";
-      this.polygoN.type = this.areaType;
-      this.polygoN.points = polygonPointz;
-      /*      this.polygonService.save(this.polygoN).subscribe(
-              result => {
-                if (this.polygonExists(this.polygoN.id)) {
-                  this.getPolygonsFromDB[this.getPolygonsFromDB.findIndex(item => item.id == result.id)] = result;
-                } else {
-                  this.getPolygonsFromDB.push(result)
-                }
-                this.toast.success("Dodano robota pomyślnie");
-                console.log(result);
-              },
-              error => {
-                this.toast.error("Wystąpił bład podczas dodawania");
-              }
-            );*/
-      this.polygonService.save(this.polygoN).subscribe(result => {
-          this.poly = this.polygon;
-          this.toast.success('Obszar zapisany w bazie')
-        }
+    const universalPoints: UniversalPoint[] = this.markers.map(marker => {
+      return new UniversalPoint(
+        this.getRealCoordinates(marker.getLatLng().lat),
+        this.getRealCoordinates(marker.getLatLng().lng),
       );
-      this.polygonPoints = [];
-      this.vertices = [];
-      this.polygoN.id = null;
-      this.polygoN = new Polygon(null, null, null);
-      //this.areaType = new AreaType(null, null);
-      //this.resetPoly();
-    }
-    else this.toast.error('Podaj typ obszaru!')
-    this.isDrawed = false;
+    });
 
+    const polygonToSave = new Polygon('polygon', this.selectedAreaType, universalPoints);
+
+    if (this.editedPolygonId) {
+      polygonToSave.id = this.editedPolygonId;
+    }
+
+    this.polygonService.save(polygonToSave).subscribe(result => {
+      this.polygons = [...this.polygons.filter(polygon => polygon.id !== result.id), result];
+      this.toast.success('Obszar zapisany w bazie');
+      this.resetPolygon();
+      this.editedPolygonId = null;
+    });
   }
 
-  polygonExists(id: string) {
-    return this.getPolygonsFromDB.some(item => item.id == id);
-  }
+  selectPolygon(polygon: Polygon) {
+    this.resetPolygon();
+    this.editedPolygonId = polygon.id;
+    this.onAreaSelected(polygon.type.id);
 
-  private deleteMarker(e) {
-    if(this.isDrawed){
-      this.drawPolygon = true;
-      this.map.removeLayer(this.polygon);
-      this.map.removeLayer(this.vertices);
-      this.vertices.map(edge => this.map.removeLayer(edge));
-      this.vertices = new Array<Marker>();
-      this.polygon = new Polygon(null, null, null);
-      this.isDrawed = false;
-    }
-    else{
-      this.vertices = this.vertices.filter(marker => marker !== e.relatedTarget);
-      this.map.removeLayer(e.relatedTarget);
-    }
-  }
-
-  private editPol(polygon: Polygon) {
-    //this.clearMap();
-    this.vertices.map(edge => this.map.removeLayer(edge));
-    this.vertices = new Array<Marker>();
-    this.polygoN.id = polygon.id;
-    //this.delete(polygon);
-    //this.resetPoly();
-
-    this.areaType = polygon.type;
-    //let existingPolygonpoints = [];
     polygon.points.forEach(point => {
-      const pointPosition = L.latLng([this.getMapCoordinates(point.x), this.getMapCoordinates(point.y)]);
-      const markerIcon = L.icon({
-        iconUrl: '/assets/icons/position.png',
-        iconSize: [36, 36],
-        iconAnchor: [36 / 2, 36 / 2]
-      });
-      let marker = new L.marker(pointPosition, {
-        draggable: true,
-        icon: markerIcon,
-        contextmenu: true,
-        contextmenuItems: [
-          {
-            text: 'Usuń punkt trasy',
-            callback: this.deleteMarker,
-            context: this
-          }
-        ]
-      });
-      this.vertices.push(marker);
-      marker.addTo(this.map);
-      marker.on('move', e => {
-        this.updatePoly(e)
+      this.addMarker({
+        latlng: L.latLng(
+          this.getMapCoordinates(point.x),
+          this.getMapCoordinates(point.y),
+        ),
       });
     });
-    this.createPoly();
   }
 
   getMapCoordinates(value) {
-    return ((value) + (this.imageResolution * this.mapResolution) / 2) * (1 / this.mapResolution) * (this.mapContainerSize / this.imageResolution)
+    return ((value) + (this.imageWidth * this.mapResolution) / 2) * (1 / this.mapResolution) * (this.mapSize / this.imageWidth);
   }
 
-  delete(polygon: Polygon) {
-    this.polygonService.delete(polygon).subscribe(
-      result => {
-        this.getPolygonsFromDB = this.getPolygonsFromDB.filter(item => item !== polygon)
-      },
-      error => {
-        /*
-                this.toastr.error("Wystąpił błąd podczas usuwania");
-        */
-      }
-    )
-  }
-
-  resetPoly() {
-    this.drawPolygon = true;
-    this.map.removeLayer(this.polygon);
-    this.map.removeLayer(this.vertices);
-    this.vertices.map(edge => this.map.removeLayer(edge));
-    this.vertices = new Array<Marker>();
-    this.polygon = new Polygon(null, null, null);
-
-  }
-
-  selectAreaTypeID(id: string) {
-    this.areaType = new AreaType(null, null);
-    this.selectedAreaType = id;
-    this.areaTypes.forEach(areaType => {
-      if (areaType.id === this.selectedAreaType) {
-        this.areaType = areaType;
-
-
-        this.polygon.setStyle({
-          color: this.areaType.color
-        });
-      }
-    });
+  getRealCoordinates(value) {
+    return (value * this.mapResolution * (this.imageWidth / this.mapSize) - ((this.imageWidth * this.mapResolution) / 2));
   }
 }

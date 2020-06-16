@@ -2,7 +2,6 @@ import {Component, OnDestroy, OnInit} from '@angular/core';
 import * as L from 'leaflet';
 import '../../../../node_modules/leaflet-rotatedmarker/leaflet.rotatedMarker.js'
 import '../../../lib/leaflet-easybutton/src/easy-button';
-import '../../../lib/leaflet-easybutton/src/easy-button.css';
 import { MapService } from '../../services/map.service';
 import { RobotService } from '../../services/robot.service';
 import { axisAngleFromQuaternion, StoreService } from '../../services/store.service';

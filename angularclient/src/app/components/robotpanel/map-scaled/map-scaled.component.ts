@@ -4,7 +4,6 @@ import '../../../../../node_modules/leaflet-contextmenu/dist/leaflet.contextmenu
 import '../../../../../node_modules/leaflet-path-transform/dist/L.Path.Transform.js'
 import '../../../../lib/leaflet-circle-to-polygon/leaflet.circle.topolygon-src.js'
 import '../../../../lib/leaflet-easybutton/src/easy-button';
-import '../../../../lib/leaflet-easybutton/src/easy-button.css';
 
 import 'leaflet-path-transform';
 import {StoreService} from "../../../services/store.service";
