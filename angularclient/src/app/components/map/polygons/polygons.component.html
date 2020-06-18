@@ -5,10 +5,17 @@
   </div>
   <div class="polygons-sidebar-container">
     <div>
-      <select class="browser-default custom-select" (change)="onAreaSelected($event.target.value)" [ngModel]="selectedAreaTypeId">
-        <option disabled></option>
-        <option [value]="item.id" *ngFor="let item of areaTypes">{{item.name}}</option>
-      </select>
+      <div class="row mb-3">
+        <div class="col">
+          <input id="polygonName" placeholder="Nazwa obszaru" class="form-control" [(ngModel)]="polygonName"/>
+        </div>
+        <div class="col">
+          <select class="browser-default custom-select" (change)="onAreaSelected($event.target.value)" [ngModel]="selectedAreaTypeId">
+            <option disabled selected value="">Typ obszaru</option>
+            <option [value]="item.id" *ngFor="let item of areaTypes">{{item.name}}</option>
+          </select>
+        </div>
+      </div>
       <button type="button" class="btn btn-light" (click)="savePolygon()">
         <i class="far fa-save"></i>
         {{ editedPolygonId ? 'Aktualizuj' : 'Stwórz'}} obszar

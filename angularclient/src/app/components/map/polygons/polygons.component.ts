@@ -33,11 +33,12 @@ export class PolygonsComponent implements OnInit {
   public polygons: Polygon[];
   public areaTypes: AreaType[] = [];
   private selectedAreaType: AreaType;
-  public selectedAreaTypeId: string;
+  public selectedAreaTypeId: string = '';
   private polygon: LeafletPolygon;
   public editedPolygonId: string;
   private map: Map;
   private imageWidth: number;
+  public polygonName: string;
   private mapResolution: number = 0.01; // TODO
 
   constructor(
@@ -143,6 +144,11 @@ export class PolygonsComponent implements OnInit {
   }
 
   savePolygon(): void {
+    if (!this.polygonName) {
+      this.toast.error('Podaj nazwę obszaru!');
+      return;
+    }
+
     if (!this.selectedAreaType) {
       this.toast.error('Podaj typ obszaru!');
       return;
@@ -160,7 +166,7 @@ export class PolygonsComponent implements OnInit {
       );
     });
 
-    const polygonToSave = new Polygon('polygon', this.selectedAreaType, universalPoints);
+    const polygonToSave = new Polygon(this.polygonName, this.selectedAreaType, universalPoints);
 
     if (this.editedPolygonId) {
       polygonToSave.id = this.editedPolygonId;
